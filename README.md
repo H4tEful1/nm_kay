@@ -17,4 +17,5 @@ To install and configure venv follow theese steps:
        Now install dependencies frome requirements.txt with command "pip install -r requirements.txt"
        Wait for installation and intrpreter upgrading
   5. Done
-       
+
+Didn't organized code from project yet so the only code it has is from "finetuning_fmri" colab, to try how it works run "kay_dload.py"
