@@ -28,10 +28,10 @@ urls =['https://osf.io/r638s/download',
        'https://osf.io/yqb3e/download',
        'https://osf.io/ymnjv/download']
 
-# for i, url in enumerate(urls):
-#     r = requests.get(url, allow_redirects=True)
-#     with open(os.path.join(path_routing.database_path, fnames[i]), 'wb') as fh:
-#         fh.write(r.content)
+for i, url in enumerate(urls):
+    r = requests.get(url, allow_redirects=True)
+    with open(os.path.join(path_routing.database_path, fnames[i]), 'wb') as fh:
+        fh.write(r.content)
 
 with np.load(os.path.join(path_routing.database_path, fnames[2])) as dobj:
   dat = dict(**dobj)
@@ -106,12 +106,17 @@ dataset['val'] = MyDataset(list(stimuli_ts_xformed),
 dataset_sizes = {x: len(dataset[x]) for x in ['train', 'val']}
 
 dataloaders = {x: torch.utils.data.DataLoader(dataset[x], batch_size=50) for x in ['train', 'val']}
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    print('cuda is av')
+    device = torch.device("cuda:0")
+else:
+    print('cuda is NOT av')
+    torch.device("cpu")
 
 # Training
-net = models.alexnet(pretrained=True)
-num_ftrs = net.classifier[6].in_features
-net.classifier[6] = nn.Linear(num_ftrs, np.shape(response_ts)[1])
+# net = models.alexnet(pretrained=True)
+# num_ftrs = net.classifier[6].in_features
+# net.classifier[6] = nn.Linear(num_ftrs, np.shape(response_ts)[1])
 net = models.resnet18(pretrained=True)
 num_ftrs = net.fc.in_features
 net.fc = nn.Linear(num_ftrs, np.shape(response_ts)[1])
