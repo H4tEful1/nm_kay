@@ -94,20 +94,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # Function to train model
-def train_model(dataloaders, dataset_sizes, num_epochs=10, learning_rate=0.15):
-    net = models.resnet18(pretrained=True)
-    num_ftrs = net.fc.in_features
-    net.fc = nn.Linear(num_ftrs, np.shape(response_ts)[1])
+def train_model(dataloaders, dataset_sizes, num_epochs=5, learning_rate=0.2):
+    net = models.alexnet(pretrained=True)
+    num_ftrs = net.classifier[6].in_features
+    net.classifier[6] = nn.Linear(num_ftrs, np.shape(response_ts)[1])
 
     net.to(device)
 
-    criterion = nn.MSELoss()  # WE can change it.
-    learning_rate = 0.15
-    num_epochs = 10
+    criterion = nn.MSELoss()  # We can change it.
     optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9)
 
     best_model_wts = copy.deepcopy(net.state_dict())
-    best_loss = 10.0
+    best_loss = float('inf')
 
     for epoch in range(num_epochs):
         print(f"Epoch {epoch}/{num_epochs - 1}")
@@ -121,7 +119,6 @@ def train_model(dataloaders, dataset_sizes, num_epochs=10, learning_rate=0.15):
                 net.eval()  # Set model to evaluate mode
 
             running_loss = 0.0
-            running_corrects = 0
 
             # Iterate over data.
             for inputs, labels in dataloaders[phase]:
@@ -157,94 +154,28 @@ def train_model(dataloaders, dataset_sizes, num_epochs=10, learning_rate=0.15):
 
     # load best model weights
     net.load_state_dict(best_model_wts)
-
-    ## Extract features of all the intermediate layers from ImageNet-trained and finetuned Alexnet
-
-    return_layers = {
-        'conv1': 'conv1',
-        'layer1': 'layer1',
-        'layer2': 'layer2',
-        'layer3': 'layer3',
-        'layer4': 'layer4',
-        'fc': 'fc',
-    }
-    # Loading resnet pretrained on Imagenet
-    net_im = models.resnet18(pretrained=True)
-    net_im.eval()
-    net_im.to(device)
-
-    # Setting up feature extraction step
-    midfeat_ft = MidGetter(net, return_layers=return_layers, keep_output=True)
-    midfeat_im = MidGetter(net_im, return_layers=return_layers, keep_output=True)
-
-    # Loading validation data and forward pass through the network
-    dataloaders = {x: torch.utils.data.DataLoader(dataset[x], batch_size=120) for x in ['val']}
-    for inputs, labels in dataloaders['val']:
-        inputs = inputs.to(device)
-        mid_outputs_ft, _ = midfeat_ft(inputs)
-        mid_outputs_im, _ = midfeat_im(inputs)
-
-    # @title Dissimilarity - Correlation
-    # Loading V1 and LOC responses
-    v1_id = np.where(dat['roi'] == 1)
-    # loc_id = np.where(dat['roi'] == 7)
-    Rts_v1 = np.squeeze(dat["responses_test"][:, v1_id])
-    # Rts_lo = np.squeeze(dat["responses_test"][:, loc_id])
-
-    # Observed dissimilarity  - Correlation
-    fMRI_dist_metric_ft = "euclidean"  # ['correlation', 'euclidean']
-    fMRI_dist_metric_im = "euclidean"  # ['correlation', 'euclidean']
-
-    CNN_ft_dist_metric = "euclidean"  # ['correlation', 'euclidean']
-    CNN_im_dist_metric = "euclidean"  # ['correlation', 'euclidean']
-
-    dobs_v1_ft = pdist(Rts_v1, fMRI_dist_metric_ft)
-    # dobs_lo_ft = pdist(Rts_lo, fMRI_dist_metric_ft)
-    dobs_v1_im = pdist(Rts_v1, fMRI_dist_metric_im)
-    # dobs_lo_im = pdist(Rts_lo, fMRI_dist_metric_im)
-
-    # Comparing representation of V1 and LOC across different layers of Alexnet
-    r, p = np.zeros((2, 6)), np.zeros((2, 6))
-    for i, l in enumerate(mid_outputs_ft.keys()):
-        dnet_ft = pdist(torch.flatten(mid_outputs_ft[l], 1, -1).cpu().detach().numpy(),
-                        CNN_ft_dist_metric)
-        dnet_im = pdist(torch.flatten(mid_outputs_im[l], 1, -1).cpu().detach().numpy(),
-                        CNN_im_dist_metric)
-        r[0, i], p[0, i] = pearsonr(dnet_ft, dobs_v1_ft)
-        r[1, i], p[1, i] = pearsonr(dnet_im, dobs_v1_im)
-        # r[2, i], p[2, i] = pearsonr(dnet_ft, dobs_lo_ft)
-    # r[3, i], p[3, i] = pearsonr(dnet_im, dobs_lo_im)
-
-    # @title Plotting correlation between observed and predicted dissimilarity values
-    plt.bar(range(6), r[0, :], alpha=0.5)
-    plt.bar(range(6), r[1, :], alpha=0.5)
-    plt.legend(['Fine Tuned', 'Imagenet'])
-    plt.ylabel('Correlation coefficient')
-    plt.title('Match to V1')
-    plt.xticks(range(6), mid_outputs_ft.keys())
-    # Save the plot to a file
-    plt.show()  # You can change the filename and path as needed
-
     return net
 
-def boost_model(dataloaders, dataset_sizes, num_models=5, num_epochs=10, learning_rate=0.15):
+
+def boost_model(dataloaders, dataset_sizes, num_models=7, num_epochs=5, learning_rate=0.2):
     models_list = []
+    individual_mse = []
 
     for i in range(num_models):
         dataloader = copy.deepcopy(dataloaders)
         dataset_size = copy.deepcopy(dataset_sizes)
-        # dat_dc = copy.deepcopy(dat)
         print(f"Training model {i+1}/{num_models}")
-        net = models.resnet18(pretrained=True)
-        num_ftrs = net.fc.in_features
-        net.fc = nn.Linear(num_ftrs, np.shape(response_ts)[1])
-        net = net.to(device)
-
         net = train_model(dataloader, dataset_size, num_epochs, learning_rate)
         models_list.append(net)
 
+        # Predict with the current model and calculate MSE
+        predictions, true_labels = predict([net], dataloaders, phase='val')
+        mse = np.mean((predictions - true_labels) ** 2)
+        individual_mse.append(mse)
+        print(f"Model {i+1} MSE: {mse:.4f}")
 
-    return models_list
+    return models_list, individual_mse
+
 
 def predict(models_list, dataloaders, phase='val'):
     for model in models_list:
@@ -270,10 +201,54 @@ def predict(models_list, dataloaders, phase='val'):
 
     return all_outputs, all_labels
 
+def evaluate_pretrained_alexnet(dataloaders, dataset_sizes):
+    net = models.alexnet(pretrained=True)
+    num_ftrs = net.classifier[6].in_features
+    net.classifier[6] = nn.Linear(num_ftrs, np.shape(response_ts)[1])
+
+    net.to(device)
+    net.eval()
+
+    all_outputs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for inputs, labels in dataloaders['val']:
+            inputs = inputs.to(device)
+            outputs = net(inputs)
+            all_outputs.append(outputs.cpu().numpy())
+            all_labels.append(labels.cpu().numpy())
+
+    all_outputs = np.concatenate(all_outputs, axis=0)
+    all_labels = np.concatenate(all_labels, axis=0)
+
+    mse = np.mean((all_outputs - all_labels) ** 2)
+    print(f"Pretrained AlexNet MSE: {mse:.4f}")
+
+    return mse
+
+
 # Assume dataloaders and dataset_sizes are defined
-models_list = boost_model(dataloaders, dataset_sizes, num_models=5, num_epochs=10, learning_rate=0.1)
+pretrained_mse = evaluate_pretrained_alexnet(dataloaders, dataset_sizes)
+models_list, individual_mse = boost_model(dataloaders, dataset_sizes, num_models=5, num_epochs=10, learning_rate=0.1)
 predictions, true_labels = predict(models_list, dataloaders, phase='val')
 
 # Evaluate the combined predictions
-mse = np.mean((predictions - true_labels) ** 2)
-print(f"Boosted Model MSE: {mse:.4f}")
+ensemble_mse = np.mean((predictions - true_labels) ** 2)
+print(f"Boosted Model MSE: {ensemble_mse:.4f}")
+
+# Plotting MSE for individual models, pretrained AlexNet, and boosted ensemble using a line plot
+plt.figure(figsize=(10, 6))
+model_indices = list(range(1, len(individual_mse) + 1))
+plt.plot(model_indices, individual_mse, marker='o', linestyle='-', label='Individual Models')
+plt.axhline(y=pretrained_mse, color='g', linestyle='--', label='Pretrained AlexNet')
+plt.axhline(y=ensemble_mse, color='r', linestyle='--', label='Boosted Ensemble')
+
+plt.xlabel('Model Number')
+plt.ylabel('MSE')
+plt.title('MSE of Individual Models, Pretrained AlexNet, and Boosted Ensemble')
+plt.legend()
+plt.show()
+
+
+

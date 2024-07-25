@@ -1,7 +1,7 @@
 import os
 import requests
 
-from app.kay_dload import net, best_model_wts, dat, mid_outputs_ft, mid_outputs_im
+from app.kay_ftune import net, best_model_wts, dat, mid_outputs_ft, mid_outputs_im
 from config.settings import path_routing
 from torch.utils.data import Dataset
 
